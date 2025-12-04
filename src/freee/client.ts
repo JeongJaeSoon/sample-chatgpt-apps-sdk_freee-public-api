@@ -109,7 +109,7 @@ export class FreeeClient {
     this.token.freee_token_expires_at = newTokens.created_at + newTokens.expires_in;
   }
 
-  // Convenience methods
+  // Convenience methods for Accounting API
   get<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
     return this.request<T>('GET', path, undefined, params);
   }
@@ -124,6 +124,71 @@ export class FreeeClient {
 
   delete<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
     return this.request<T>('DELETE', path, undefined, params);
+  }
+
+  // Invoice API methods (separate base URL)
+  async invoiceRequest<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string | number | boolean | undefined>
+  ): Promise<T> {
+    await this.ensureValidToken();
+
+    const url = new URL(path, config.freee.invoiceApiBaseUrl);
+
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined) {
+          url.searchParams.set(key, String(value));
+        }
+      }
+    }
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.token.freee_access_token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+
+    const options: RequestInit = {
+      method,
+      headers,
+    };
+
+    if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+      options.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url.toString(), options);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ status_code: response.status, errors: [] }));
+      throw new FreeeApiException(response.status, error as FreeeApiError);
+    }
+
+    const text = await response.text();
+    if (!text) {
+      return {} as T;
+    }
+
+    return JSON.parse(text) as T;
+  }
+
+  invoiceGet<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+    return this.invoiceRequest<T>('GET', path, undefined, params);
+  }
+
+  invoicePost<T>(path: string, body?: unknown, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+    return this.invoiceRequest<T>('POST', path, body, params);
+  }
+
+  invoicePut<T>(path: string, body?: unknown, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+    return this.invoiceRequest<T>('PUT', path, body, params);
+  }
+
+  invoiceDelete<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+    return this.invoiceRequest<T>('DELETE', path, undefined, params);
   }
 }
 

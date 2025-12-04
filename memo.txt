@@ -1,0 +1,9 @@
+curl -X POST https://XXXXXXX.ngrok-free.app/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "ChatGPT",
+    "redirect_uris": [
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+      "https://chatgpt.com/backend-api/aip/connectors/links/oauth/callback"
+    ]
+  }'

@@ -1,10 +1,4 @@
 import { FreeeClient } from '../../freee/client';
-import {
-  Invoice,
-  InvoicesResponse,
-  InvoiceResponse,
-  CreateInvoiceParams,
-} from '../../freee/types';
 
 interface Tool {
   name: string;
@@ -17,10 +11,82 @@ interface Tool {
   handler: (client: FreeeClient, companyId: number, args: Record<string, unknown>) => Promise<unknown>;
 }
 
+// Response types for Invoice API (iv/api/v1)
+interface InvoiceApiInvoice {
+  id: number;
+  company_id: number;
+  invoice_number: string;
+  billing_date: string;
+  payment_date: string | null;
+  payment_type: string;
+  subject: string | null;
+  total_amount: number;
+  total_vat: number;
+  sub_total: number;
+  partner_id: number | null;
+  partner_name: string | null;
+  partner_title: string;
+  tax_entry_method: string;
+  lines: Array<{
+    id: number;
+    type: string;
+    description: string;
+    quantity: number | null;
+    unit: string | null;
+    unit_price: number | null;
+    amount: number | null;
+    tax_rate: number | null;
+  }>;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface InvoiceApiListResponse {
+  invoices: InvoiceApiInvoice[];
+  meta?: {
+    total_count: number;
+  };
+}
+
+interface InvoiceApiResponse {
+  invoice: InvoiceApiInvoice;
+}
+
+interface InvoiceTemplatesResponse {
+  invoice_templates: Array<{
+    id: number;
+    name: string;
+  }>;
+}
+
 export const invoiceTools: Tool[] = [
   {
+    name: 'freee_list_invoice_templates',
+    description: '使用可能な請求書テンプレート一覧を取得します。請求書作成時にtemplate_idが必要な場合に使用します。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: {
+          type: 'number',
+          description: '事業所ID（必須）',
+        },
+      },
+      required: ['company_id'],
+    },
+    handler: async (client, companyId, _args) => {
+      const response = await client.invoiceGet<InvoiceTemplatesResponse>('/invoices/templates', {
+        company_id: companyId,
+      });
+      return {
+        templates: response.invoice_templates,
+      };
+    },
+  },
+
+  {
     name: 'freee_list_invoices',
-    description: '請求書の一覧を取得します。ステータスや取引先でフィルタリングできます。',
+    description: '請求書の一覧を取得します。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -32,31 +98,13 @@ export const invoiceTools: Tool[] = [
           type: 'number',
           description: '取引先IDでフィルタリング',
         },
-        invoice_status: {
+        start_billing_date: {
           type: 'string',
-          enum: ['draft', 'applying', 'remanded', 'rejected', 'approved', 'issued', 'unsubmitted'],
-          description: '請求書のステータスでフィルタリング',
+          description: '請求日の範囲開始（YYYY-MM-DD形式）',
         },
-        payment_status: {
+        end_billing_date: {
           type: 'string',
-          enum: ['empty', 'unsettled', 'settled'],
-          description: '入金ステータスでフィルタリング',
-        },
-        start_issue_date: {
-          type: 'string',
-          description: '発行日の範囲開始（YYYY-MM-DD形式）',
-        },
-        end_issue_date: {
-          type: 'string',
-          description: '発行日の範囲終了（YYYY-MM-DD形式）',
-        },
-        start_due_date: {
-          type: 'string',
-          description: '支払期日の範囲開始（YYYY-MM-DD形式）',
-        },
-        end_due_date: {
-          type: 'string',
-          description: '支払期日の範囲終了（YYYY-MM-DD形式）',
+          description: '請求日の範囲終了（YYYY-MM-DD形式）',
         },
         offset: {
           type: 'number',
@@ -74,18 +122,13 @@ export const invoiceTools: Tool[] = [
         company_id: companyId,
       };
 
-      // Add optional filters
       if (args.partner_id) params.partner_id = args.partner_id as number;
-      if (args.invoice_status) params.invoice_status = args.invoice_status as string;
-      if (args.payment_status) params.payment_status = args.payment_status as string;
-      if (args.start_issue_date) params.start_issue_date = args.start_issue_date as string;
-      if (args.end_issue_date) params.end_issue_date = args.end_issue_date as string;
-      if (args.start_due_date) params.start_due_date = args.start_due_date as string;
-      if (args.end_due_date) params.end_due_date = args.end_due_date as string;
+      if (args.start_billing_date) params.start_billing_date = args.start_billing_date as string;
+      if (args.end_billing_date) params.end_billing_date = args.end_billing_date as string;
       if (args.offset !== undefined) params.offset = args.offset as number;
       if (args.limit !== undefined) params.limit = args.limit as number;
 
-      const response = await client.get<InvoicesResponse>('/api/1/invoices', params);
+      const response = await client.invoiceGet<InvoiceApiListResponse>('/invoices', params);
       return {
         invoices: response.invoices.map(formatInvoiceSummary),
         total_count: response.meta?.total_count,
@@ -112,7 +155,7 @@ export const invoiceTools: Tool[] = [
     },
     handler: async (client, companyId, args) => {
       const invoiceId = args.id as number;
-      const response = await client.get<InvoiceResponse>(`/api/1/invoices/${invoiceId}`, {
+      const response = await client.invoiceGet<InvoiceApiResponse>(`/invoices/${invoiceId}`, {
         company_id: companyId,
       });
       return formatInvoiceDetail(response.invoice);
@@ -121,7 +164,7 @@ export const invoiceTools: Tool[] = [
 
   {
     name: 'freee_create_invoice',
-    description: '新しい請求書を作成します。',
+    description: '新しい請求書を作成します。事前にfreee_list_invoice_templatesでテンプレートIDを取得してください。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -129,53 +172,77 @@ export const invoiceTools: Tool[] = [
           type: 'number',
           description: '事業所ID（必須）',
         },
-        issue_date: {
+        billing_date: {
           type: 'string',
-          description: '発行日（YYYY-MM-DD形式、必須）',
+          description: '請求日（YYYY-MM-DD形式、必須）',
         },
         partner_id: {
           type: 'number',
-          description: '取引先ID',
+          description: '取引先ID（partner_idまたはpartner_codeのいずれかが必須）',
         },
-        partner_name: {
+        partner_code: {
           type: 'string',
-          description: '取引先名（partner_idを指定しない場合に使用）',
+          description: '取引先コード（partner_idまたはpartner_codeのいずれかが必須）',
         },
-        title: {
+        template_id: {
+          type: 'number',
+          description: '帳票テンプレートID（省略時は事業所のデフォルト）',
+        },
+        invoice_number: {
           type: 'string',
-          description: '件名',
+          description: '請求書番号（自動採番設定によっては必須）',
         },
-        due_date: {
+        payment_date: {
           type: 'string',
           description: '支払期日（YYYY-MM-DD形式）',
         },
-        description: {
+        payment_type: {
           type: 'string',
-          description: '概要',
+          enum: ['transfer', 'direct_debit'],
+          description: '入金方法（transfer: 振込, direct_debit: 口座振替）',
         },
-        invoice_status: {
+        subject: {
           type: 'string',
-          enum: ['draft', 'issue'],
-          description: '請求書ステータス（draft: 下書き, issue: 発行）',
+          description: '件名',
         },
         tax_entry_method: {
           type: 'string',
-          enum: ['inclusive', 'exclusive'],
-          description: '税込/税抜（inclusive: 内税, exclusive: 外税）',
+          enum: ['in', 'out'],
+          description: '消費税内税/外税（in: 内税, out: 外税、必須）',
+        },
+        tax_fraction: {
+          type: 'string',
+          enum: ['omit', 'round_up', 'round'],
+          description: '消費税端数計算方法（omit: 切り捨て, round_up: 切り上げ, round: 四捨五入、必須）',
+        },
+        withholding_tax_entry_method: {
+          type: 'string',
+          enum: ['in', 'out'],
+          description: '源泉徴収計算方法（in: 税込, out: 税抜、必須）',
+        },
+        partner_title: {
+          type: 'string',
+          enum: ['御中', '様', ''],
+          description: '敬称（必須）',
         },
         lines: {
           type: 'array',
-          description: '請求書の明細行',
+          description: '請求書の明細行（必須）',
           items: {
             type: 'object',
             properties: {
+              type: {
+                type: 'string',
+                enum: ['item', 'text'],
+                description: '行タイプ（item: 品目, text: テキスト）',
+              },
               description: {
                 type: 'string',
-                description: '品目名',
+                description: '品名（必須）',
               },
-              qty: {
+              quantity: {
                 type: 'number',
-                description: '数量',
+                description: '数量（品目行では必須）',
               },
               unit: {
                 type: 'string',
@@ -185,49 +252,54 @@ export const invoiceTools: Tool[] = [
                 type: 'number',
                 description: '単価',
               },
-              tax_code: {
+              tax_rate: {
                 type: 'number',
-                description: '税区分コード（21: 課税売上10%, 22: 課税売上8%軽減など）',
+                enum: [0, 8, 10],
+                description: '税率（0, 8, 10のいずれか）',
               },
             },
           },
         },
       },
-      required: ['company_id', 'issue_date', 'lines'],
+      required: ['company_id', 'billing_date', 'tax_entry_method', 'tax_fraction', 'withholding_tax_entry_method', 'partner_title', 'lines'],
     },
     handler: async (client, companyId, args) => {
       const lines = (args.lines as Array<{
-        description?: string;
-        qty: number;
+        type?: string;
+        description: string;
+        quantity?: number;
         unit?: string;
-        unit_price: number;
-        tax_code: number;
-      }>).map((line, index) => ({
-        order: index + 1,
-        type: 'normal' as const,
-        qty: line.qty,
-        unit: line.unit || '',
+        unit_price?: number;
+        tax_rate?: number;
+      }>).map((line) => ({
+        type: line.type || 'item',
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
         unit_price: line.unit_price,
-        description: line.description || '',
-        tax_code: line.tax_code,
+        tax_rate: line.tax_rate,
       }));
 
-      const invoiceParams: CreateInvoiceParams = {
+      const invoiceParams: Record<string, unknown> = {
         company_id: companyId,
-        issue_date: args.issue_date as string,
-        invoice_contents: lines,
+        billing_date: args.billing_date,
+        tax_entry_method: args.tax_entry_method,
+        tax_fraction: args.tax_fraction,
+        withholding_tax_entry_method: args.withholding_tax_entry_method,
+        partner_title: args.partner_title,
+        lines: lines,
       };
 
       // Add optional fields
-      if (args.partner_id) invoiceParams.partner_id = args.partner_id as number;
-      if (args.partner_name) invoiceParams.partner_display_name = args.partner_name as string;
-      if (args.title) invoiceParams.title = args.title as string;
-      if (args.due_date) invoiceParams.due_date = args.due_date as string;
-      if (args.description) invoiceParams.description = args.description as string;
-      if (args.invoice_status) invoiceParams.invoice_status = args.invoice_status as 'draft' | 'issue';
-      if (args.tax_entry_method) invoiceParams.tax_entry_method = args.tax_entry_method as 'inclusive' | 'exclusive';
+      if (args.partner_id) invoiceParams.partner_id = args.partner_id;
+      if (args.partner_code) invoiceParams.partner_code = args.partner_code;
+      if (args.template_id) invoiceParams.template_id = args.template_id;
+      if (args.invoice_number) invoiceParams.invoice_number = args.invoice_number;
+      if (args.payment_date) invoiceParams.payment_date = args.payment_date;
+      if (args.payment_type) invoiceParams.payment_type = args.payment_type;
+      if (args.subject) invoiceParams.subject = args.subject;
 
-      const response = await client.post<InvoiceResponse>('/api/1/invoices', invoiceParams);
+      const response = await client.invoicePost<InvoiceApiResponse>('/invoices', invoiceParams);
       return {
         message: '請求書を作成しました',
         invoice: formatInvoiceDetail(response.invoice),
@@ -249,26 +321,17 @@ export const invoiceTools: Tool[] = [
           type: 'number',
           description: '請求書ID（必須）',
         },
-        issue_date: {
+        billing_date: {
           type: 'string',
-          description: '発行日（YYYY-MM-DD形式）',
+          description: '請求日（YYYY-MM-DD形式）',
         },
-        title: {
-          type: 'string',
-          description: '件名',
-        },
-        due_date: {
+        payment_date: {
           type: 'string',
           description: '支払期日（YYYY-MM-DD形式）',
         },
-        description: {
+        subject: {
           type: 'string',
-          description: '概要',
-        },
-        invoice_status: {
-          type: 'string',
-          enum: ['draft', 'issue'],
-          description: '請求書ステータス',
+          description: '件名',
         },
       },
       required: ['company_id', 'id'],
@@ -280,13 +343,11 @@ export const invoiceTools: Tool[] = [
         company_id: companyId,
       };
 
-      if (args.issue_date) updateParams.issue_date = args.issue_date;
-      if (args.title) updateParams.title = args.title;
-      if (args.due_date) updateParams.due_date = args.due_date;
-      if (args.description) updateParams.description = args.description;
-      if (args.invoice_status) updateParams.invoice_status = args.invoice_status;
+      if (args.billing_date) updateParams.billing_date = args.billing_date;
+      if (args.payment_date) updateParams.payment_date = args.payment_date;
+      if (args.subject) updateParams.subject = args.subject;
 
-      const response = await client.put<InvoiceResponse>(`/api/1/invoices/${invoiceId}`, updateParams);
+      const response = await client.invoicePut<InvoiceApiResponse>(`/invoices/${invoiceId}`, updateParams);
       return {
         message: '請求書を更新しました',
         invoice: formatInvoiceDetail(response.invoice),
@@ -296,7 +357,7 @@ export const invoiceTools: Tool[] = [
 
   {
     name: 'freee_delete_invoice',
-    description: '請求書を削除します（下書き状態のみ削除可能）。',
+    description: '請求書を削除します。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -313,7 +374,7 @@ export const invoiceTools: Tool[] = [
     },
     handler: async (client, companyId, args) => {
       const invoiceId = args.id as number;
-      await client.delete(`/api/1/invoices/${invoiceId}`, {
+      await client.invoiceDelete(`/invoices/${invoiceId}`, {
         company_id: companyId,
       });
       return {
@@ -323,70 +384,47 @@ export const invoiceTools: Tool[] = [
   },
 ];
 
-// Helper functions to format invoice data
-function formatInvoiceSummary(invoice: Invoice) {
+// Helper functions
+function formatInvoiceSummary(invoice: InvoiceApiInvoice) {
   return {
     id: invoice.id,
     invoice_number: invoice.invoice_number,
-    issue_date: invoice.issue_date,
+    billing_date: invoice.billing_date,
     partner_name: invoice.partner_name,
-    title: invoice.title,
+    subject: invoice.subject,
     total_amount: invoice.total_amount,
-    invoice_status: translateInvoiceStatus(invoice.invoice_status),
-    payment_status: translatePaymentStatus(invoice.payment_status),
-    due_date: invoice.due_date,
+    status: invoice.status,
+    payment_date: invoice.payment_date,
   };
 }
 
-function formatInvoiceDetail(invoice: Invoice) {
+function formatInvoiceDetail(invoice: InvoiceApiInvoice) {
   return {
     id: invoice.id,
     invoice_number: invoice.invoice_number,
-    issue_date: invoice.issue_date,
+    billing_date: invoice.billing_date,
+    partner_id: invoice.partner_id,
     partner_name: invoice.partner_name,
-    partner_display_name: invoice.partner_display_name,
-    title: invoice.title,
-    description: invoice.description,
+    partner_title: invoice.partner_title,
+    subject: invoice.subject,
     total_amount: invoice.total_amount,
     sub_total: invoice.sub_total,
     total_vat: invoice.total_vat,
-    invoice_status: translateInvoiceStatus(invoice.invoice_status),
-    payment_status: translatePaymentStatus(invoice.payment_status),
-    due_date: invoice.due_date,
+    tax_entry_method: invoice.tax_entry_method,
+    payment_type: invoice.payment_type,
     payment_date: invoice.payment_date,
-    lines: invoice.invoice_contents.map(line => ({
+    status: invoice.status,
+    lines: invoice.lines.map(line => ({
+      id: line.id,
       type: line.type,
       description: line.description,
-      qty: line.qty,
+      quantity: line.quantity,
       unit: line.unit,
       unit_price: line.unit_price,
       amount: line.amount,
-      vat: line.vat,
+      tax_rate: line.tax_rate,
     })),
-    company_name: invoice.company_name,
-    message: invoice.message,
-    notes: invoice.notes,
+    created_at: invoice.created_at,
+    updated_at: invoice.updated_at,
   };
-}
-
-function translateInvoiceStatus(status: string): string {
-  const statusMap: Record<string, string> = {
-    draft: '下書き',
-    applying: '申請中',
-    remanded: '差戻し',
-    rejected: '却下',
-    approved: '承認済み',
-    issued: '発行済み',
-    unsubmitted: '未提出',
-  };
-  return statusMap[status] || status;
-}
-
-function translatePaymentStatus(status: string): string {
-  const statusMap: Record<string, string> = {
-    empty: '未設定',
-    unsettled: '未入金',
-    settled: '入金済み',
-  };
-  return statusMap[status] || status;
 }

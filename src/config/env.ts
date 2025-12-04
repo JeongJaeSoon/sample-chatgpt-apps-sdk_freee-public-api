@@ -24,6 +24,7 @@ export const config = {
     authorizationEndpoint: 'https://accounts.secure.freee.co.jp/public_api/authorize',
     tokenEndpoint: 'https://accounts.secure.freee.co.jp/public_api/token',
     apiBaseUrl: 'https://api.freee.co.jp',
+    invoiceApiBaseUrl: 'https://api.freee.co.jp/iv/api/v1', // 청구서 전용 API
   },
 
   // JWT
